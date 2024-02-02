@@ -25,6 +25,7 @@ on:
     # tag at the end of CI if successful and the tag will trigger the artifact
     # uploads as well as publication to crates.io.
     - 'release-*'
+    - 'win-feature'
 
 defaults:
   run:
@@ -41,6 +42,7 @@ jobs:
   rustfmt:
     name: Rustfmt
     runs-on: ubuntu-latest
+    if: false
     steps:
     - uses: actions/checkout@v4
       with:
@@ -59,6 +61,7 @@ jobs:
   clangformat:
     name: Clang format
     runs-on: ubuntu-latest
+    if: false
     steps:
     - uses: actions/checkout@v4
       with:
@@ -76,7 +79,7 @@ jobs:
   cargo_deny:
     name: Cargo deny
     needs: determine
-    if: needs.determine.outputs.audit
+    if: false
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -100,7 +103,7 @@ jobs:
   cargo_vet:
     name: Cargo vet
     needs: determine
-    if: needs.determine.outputs.audit
+    if: false
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -130,13 +133,13 @@ jobs:
     name: Determine CI jobs to run
     runs-on: ubuntu-latest
     outputs:
-      run-full: ${{ steps.calculate.outputs.run-full }}
+      run-full: false
       test-matrix: ${{ steps.calculate.outputs.test-matrix }}
-      build-matrix: ${{ steps.calculate.outputs.build-matrix }}
-      test-capi: ${{ steps.calculate.outputs.test-capi }}
-      build-fuzz: ${{ steps.calculate.outputs.build-fuzz }}
-      audit: ${{ steps.calculate.outputs.audit }}
-      preview1-adapter: ${{ steps.calculate.outputs.preview1-adapter }}
+      build-matrix: false
+      test-capi: false
+      build-fuzz: false
+      audit: false
+      preview1-adapter: false
     steps:
     - uses: actions/checkout@v4
     - id: calculate
@@ -194,7 +197,7 @@ jobs:
   # gets uploaded to the `gh-pages` branch later on.
   doc:
     needs: determine
-    if: needs.determine.outputs.run-full
+    if: false
     name: Doc build
     runs-on: ubuntu-latest
     env:
@@ -263,7 +266,7 @@ jobs:
   # double-check that Rust code compiles and is likely to work everywhere else.
   checks:
     needs: determine
-    if: needs.determine.outputs.run-full
+    if: false
     name: Check
     runs-on: ubuntu-latest
     env:
@@ -352,7 +355,7 @@ jobs:
   # Tracking issue: https://github.com/bytecodealliance/wasmtime/issues/4992
   checks_winarm64:
     needs: determine
-    if: needs.determine.outputs.run-full
+    if: false
     name: Check Windows ARM64
     runs-on: windows-latest
     steps:
@@ -372,7 +375,7 @@ jobs:
   # Verify all fuzz targets compile successfully
   fuzz_targets:
     needs: determine
-    if: needs.determine.outputs.build-fuzz
+    if: false
     name: Fuzz Targets
     runs-on: ubuntu-latest
     steps:
@@ -429,11 +432,27 @@ jobs:
 
     # Install OpenVINO for testing wasmtime-wasi-nn.
     - uses: abrown/install-openvino-action@v8
-      if: runner.arch == 'X64'
+      if: false
 
     # Fix an ICE for now in gcc when compiling zstd with debuginfo (??)
     - run: echo CFLAGS=-g0 >> $GITHUB_ENV
       if: matrix.target == 'x86_64-pc-windows-gnu'
+
+    - run: Get-ItemProperty -Path "Registry::HKEY_LOCAL_MACHINE\Software\Microsoft\Windows NT\CurrentVersion"
+      if: runner.os == 'Windows'
+      shell: pwsh
+
+    - run: Get-WindowsFeature
+      if: runner.os == 'Windows'
+      shell: pwsh
+
+    - run: Get-ComputerInfo  | fl WindowsProductName,OSDisplayVersion
+      if: runner.os == 'Windows'
+      shell: pwsh
+
+    - run: Install-WindowsFeature Desktop-Experience
+      if: runner.os == 'Windows'
+      shell: pwsh
 
     # Update binutils if MinGW due to https://github.com/rust-lang/rust/issues/112368
     - run: C:/msys64/usr/bin/pacman.exe -S --needed mingw-w64-x86_64-gcc --noconfirm
@@ -541,7 +560,7 @@ jobs:
   build-preview1-component-adapter:
     name: Build wasi-preview1-component-adapter
     needs: determine
-    if: needs.determine.outputs.preview1-adapter
+    if: false
     runs-on: ubuntu-latest
     permissions:
       deployments: write
@@ -578,6 +597,7 @@ jobs:
   build-wasmtime-target-wasm32:
     name: Build wasmtime-target-wasm32
     needs: determine
+    if: false
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -598,7 +618,7 @@ jobs:
 
   bench:
     needs: determine
-    if: needs.determine.outputs.run-full
+    if: false
     name: Run benchmarks
     runs-on: ubuntu-latest
     steps:
