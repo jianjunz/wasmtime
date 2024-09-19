@@ -398,6 +398,7 @@ impl FromStr for gen::graph::GraphEncoding {
             "tensorflow" => Ok(gen::graph::GraphEncoding::Tensorflow),
             "tensorflowlite" => Ok(gen::graph::GraphEncoding::Tensorflowlite),
             "autodetect" => Ok(gen::graph::GraphEncoding::Autodetect),
+            "ggml" => Ok(gen::graph::GraphEncoding::Ggml),
             _ => Err(GraphEncodingParseError(s.into())),
         }
     }

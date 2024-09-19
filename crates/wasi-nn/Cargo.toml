@@ -42,6 +42,10 @@ openvino = { version = "0.8.0", features = [
     "runtime-linking",
 ], optional = true }
 
+# These dependencies are for ggml support:
+# llama_cpp = {version="0.3.2", optional=true}
+llama_cpp = { git = "https://github.com/vargad/llama_cpp-rs.git", branch = "bump_3038", optional=true }
+
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.52"
 features = [
@@ -65,7 +69,7 @@ wasmtime = { workspace = true, features = ["cranelift", 'signals-based-traps'] }
 tracing-subscriber = { workspace = true }
 
 [features]
-default = ["openvino", "winml"]
+default = ["openvino", "winml", "ggml"]
 # OpenVINO is available on all platforms; it requires OpenVINO to be installed.
 openvino = ["dep:openvino"]
 # ONNX is available on all platforms.
@@ -74,6 +78,8 @@ onnx = ["dep:ort"]
 winml = ["dep:windows"]
 # PyTorch is available on all platforms; requires Libtorch to be installed
 pytorch = ["dep:tch"]
+# GGML is available on all platforms.
+ggml=["dep:llama_cpp"]
 
 [[test]]
 name = "test-programs"

@@ -10,6 +10,8 @@ pub mod openvino;
 pub mod pytorch;
 #[cfg(all(feature = "winml", target_os = "windows"))]
 pub mod winml;
+#[cfg(feature = "ggml")]
+pub mod ggml;
 
 #[cfg(feature = "onnx")]
 use self::onnx::OnnxBackend;
@@ -19,6 +21,8 @@ use self::openvino::OpenvinoBackend;
 use self::pytorch::PytorchBackend;
 #[cfg(all(feature = "winml", target_os = "windows"))]
 use self::winml::WinMLBackend;
+#[cfg(feature = "ggml")]
+use self::ggml::GgmlBackend;
 
 use crate::wit::{ExecutionTarget, GraphEncoding, Tensor};
 use crate::{Backend, ExecutionContext, Graph};
@@ -47,6 +51,10 @@ pub fn list() -> Vec<Backend> {
     #[cfg(feature = "pytorch")]
     {
         backends.push(Backend::from(PytorchBackend::default()));
+    }
+    #[cfg(feature="ggml")]
+    {
+        backends.push(Backend::from(GgmlBackend::default()));
     }
     backends
 }
