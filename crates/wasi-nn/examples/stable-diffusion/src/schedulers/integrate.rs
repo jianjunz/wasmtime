@@ -5,17 +5,17 @@
 //! So if 350 function evaluations is not giving the desired accuracy than the programmer probably needs to give some guidance by splitting up the range at singularities or [other preparation techniques](http://www.johndcook.com/blog/2012/02/21/care-and-treatment-of-singularities/).
 //!
 //! This code is mostly copied and adapted from `quadrature` https://github.com/Eh2406/quadrature
-use std::f64;
+use std::f32;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Output {
     pub num_function_evaluations: u32,
-    pub error_estimate: f64,
-    pub integral: f64,
+    pub error_estimate: f32,
+    pub integral: f32,
 }
 
 impl Output {
-    fn scale(self, c: f64) -> Self {
+    fn scale(self, c: f32) -> Self {
         Output {
             num_function_evaluations: self.num_function_evaluations,
             error_estimate: c * self.error_estimate,
@@ -24,9 +24,9 @@ impl Output {
     }
 }
 
-pub fn integrate<F>(f: F, a: f64, b: f64, target_absolute_error: f64) -> Output
+pub fn integrate<F>(f: F, a: f32, b: f32, target_absolute_error: f32) -> Output
 where
-    F: Fn(f64) -> f64,
+    F: Fn(f32) -> f32,
 {
     // Apply the linear change of variables x = ct + d
     // $$\int_a^b f(x) dx = c \int_{-1}^1 f( ct + d ) dt$$
@@ -48,15 +48,15 @@ where
 }
 
 /// Integrate f(x) from [-1.0, 1.0]
-fn integrate_core<F>(f: F, target_absolute_error: f64) -> Output
+fn integrate_core<F>(f: F, target_absolute_error: f32) -> Output
 where
-    F: Fn(f64) -> f64,
+    F: Fn(f32) -> f32,
 {
-    let mut error_estimate = f64::MAX;
+    let mut error_estimate = f32::MAX;
     let mut num_function_evaluations = 1;
-    let mut current_delta = f64::MAX;
+    let mut current_delta = f32::MAX;
 
-    let mut integral = 2.0 * f64::consts::FRAC_PI_2 * f(0.0);
+    let mut integral = 2.0 * f32::consts::FRAC_PI_2 * f(0.0);
 
     for &weight in &WEIGHTS {
         let new_contribution =
@@ -105,7 +105,7 @@ where
     Output { num_function_evaluations: num_function_evaluations as u32, error_estimate, integral }
 }
 
-pub const WEIGHTS: [&[(f64, f64)]; 7] = [
+pub const WEIGHTS: [&[(f32, f32)]; 7] = [
     &[
         // First layer weights
         (0.230_022_394_514_788_68, 0.951_367_964_072_746_9),

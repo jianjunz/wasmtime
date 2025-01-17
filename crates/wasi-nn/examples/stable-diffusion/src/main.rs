@@ -1,5 +1,5 @@
 use core::time;
-use ndarray::{Array, Dim};
+use ndarray::{range, Array, Dim};
 use rand::Rng;
 use std::fs;
 use std::io::BufRead;
@@ -114,7 +114,7 @@ fn text_encoder(prompt: &Vec<i32>) -> Result<Vec<u8>, crate::wasi::nn::errors::E
 
 fn text_embeddings(prompt: &mut Vec<i32>) -> Result<Tensor, crate::wasi::nn::errors::Error> {
     prompt.extend(vec![BLANK_TOKEN_VALUE; MODEL_MAX_LENGTH - prompt.len()]);
-    let mut prompt_encoded = u8_to_f32_vec(&(text_encoder(prompt).unwrap()).as_slice());
+    let prompt_encoded = u8_to_f32_vec(&(text_encoder(prompt).unwrap()).as_slice());
     let prompt_embeddings_data = f32_to_u8_vec(prompt_encoded.as_slice());
 
     let default_prompt = vec![BLANK_TOKEN_VALUE; MODEL_MAX_LENGTH];
@@ -127,7 +127,7 @@ fn text_embeddings(prompt: &mut Vec<i32>) -> Result<Tensor, crate::wasi::nn::err
     Ok(embeddings)
 }
 
-fn generate_latent_sample(height: usize, width: usize, init_noise_sigma: f64) -> Tensor {
+fn generate_latent_sample(height: usize, width: usize, init_noise_sigma: f32) -> Tensor {
     let mut rng = rand::thread_rng();
     let batch_size = 1;
     let channels = 4;
@@ -144,21 +144,21 @@ fn generate_latent_sample(height: usize, width: usize, init_noise_sigma: f64) ->
     }
     let latent_sample = latent_sample
         .iter()
-        .map(|x| *x as f64)
-        .collect::<Vec<f64>>();
-    let mut latent_sample_bytes: Vec<u8> = vec![0; latent_sample.len() * 8];
+        .map(|x| *x as f32)
+        .collect::<Vec<f32>>();
+    let mut latent_sample_bytes: Vec<u8> = vec![0; latent_sample.len() * 4];
     for i in 0..latent_sample.len() {
         let bytes = latent_sample[i].to_ne_bytes();
-        latent_sample_bytes[i * 8..(i + 1) * 8].copy_from_slice(&bytes);
+        latent_sample_bytes[i * 4..(i + 1) * 4].copy_from_slice(&bytes);
     }
     Tensor::new(
         &vec![
             batch_size as u32,
             channels as u32,
-            (height / 8) as u32,
-            (width / 8) as u32,
+            (height / 4) as u32,
+            (width / 4) as u32,
         ],
-        TensorType::Fp64,
+        TensorType::Fp32,
         &latent_sample_bytes,
     )
 }
@@ -186,11 +186,11 @@ fn unet(tokens: Tensor) -> Result<Tensor, crate::wasi::nn::errors::Error> {
         order: 4,
         train_timesteps: 1000,
     };
-    let scheduler = schedulers::lms_discrete::LMSDiscreteScheduler::new(N_STEPS, scheduler_config);
-    let timesteps = scheduler.timesteps();
-    let latents = generate_latent_sample(width, height, scheduler.init_noise_sigma());
+    let mut scheduler =
+        schedulers::lms_discrete::LMSDiscreteScheduler::new(N_STEPS, scheduler_config);
+    let mut latents = generate_latent_sample(width, height, scheduler.init_noise_sigma());
 
-    for i in 0..timesteps.len() {
+    for i in 0..scheduler.timesteps().len() {
         let tokens_copied = Tensor::new(&tokens.dimensions(), tokens.ty(), &tokens.data());
         let latent_mode_input = Tensor::new(
             &vec![1, 4, (height / 8) as u32, (width / 8) as u32],
@@ -198,8 +198,8 @@ fn unet(tokens: Tensor) -> Result<Tensor, crate::wasi::nn::errors::Error> {
             &[latents.data(), latents.data()].concat(),
         );
         let latent_mode_input = scheduler.scale_model_input(
-            u8_to_f64_vec(latent_mode_input.data().as_slice()),
-            timesteps[i],
+            u8_to_f32_vec(latent_mode_input.data().as_slice()),
+            scheduler.timesteps()[i],
         );
         let latent_mode_tensor = Tensor::new(
             &vec![2, 4, (height / 8) as u32, (width / 8) as u32],
@@ -209,7 +209,7 @@ fn unet(tokens: Tensor) -> Result<Tensor, crate::wasi::nn::errors::Error> {
         let timestep_tensor = Tensor::new(
             &vec![1],
             TensorType::I64,
-            &i64_to_u8_vec(&[timesteps[i] as i64]),
+            &i64_to_u8_vec(&[scheduler.timesteps()[i] as i64]),
         );
         println!(
             "encoder_hidden_states, size: {}, dimensions: {:?}",
@@ -229,10 +229,25 @@ fn unet(tokens: Tensor) -> Result<Tensor, crate::wasi::nn::errors::Error> {
             &latent_mode_tensor.dimensions()
         );
         exec_context.set_input("sample", latent_mode_tensor);
-        println!("Executing UNet model for timestep[{}] {}", i, timesteps[i]);
+        println!(
+            "Executing UNet model for timestep[{}] {}",
+            i,
+            scheduler.timesteps()[i]
+        );
         exec_context.compute().unwrap();
-        let output_tensor = exec_context.get_output("latent_sample").unwrap();
+        let output_tensor = exec_context.get_output("out_sample").unwrap();
         let (noise_pred, noise_pred_text) = split_tensor(output_tensor);
+        let noise_pred_updated = perform_guidance(&noise_pred, &noise_pred_text, 7.5);
+        let latents_data = scheduler.step(
+            u8_to_f32_vec(noise_pred_updated.data().as_slice()).as_slice(),
+            scheduler.timesteps()[i],
+            &u8_to_f32_vec(&latents.data().as_slice()).as_slice(),
+        );
+        latents = Tensor::new(
+            &vec![1, 4, (height / 4) as u32, (width / 4) as u32],
+            TensorType::Fp32,
+            &f32_to_u8_vec(latents_data.as_slice()),
+        );
     }
     Ok(Tensor::new(
         &vec![1, width as u32, height as u32],
@@ -249,6 +264,14 @@ fn split_tensor(input: Tensor) -> (Tensor, Tensor) {
     split_dim[1] = input_dim[0] / 2;
     let mut tensor1_data = vec![0 as f32; input_data.len() / 2];
     let mut tensor2_data = vec![0 as f32; input_data.len() / 2];
+    for j in 0..4 {
+        for k in 0..64 {
+            for l in 0..64 {
+                tensor1_data[j * 64 * 64 + k * 64 + l] = input_data[j * 64 * 64 + k * 64 + l];
+                tensor2_data[j * 64 * 64 + k * 64 + l] = input_data[(j + 4) * 64 * 64 + k * 64 + l];
+            }
+        }
+    }
     let mut tensor1 = Tensor::new(
         &split_dim,
         input_type,
@@ -262,7 +285,36 @@ fn split_tensor(input: Tensor) -> (Tensor, Tensor) {
     (tensor1, tensor2)
 }
 
-fn decode(input: Tensor) -> String {
+fn perform_guidance(noise_pred: &Tensor, noise_pred_text: &Tensor, guidance_scale: f32) -> Tensor {
+    let noise_pred_data = u8_to_f32_vec(noise_pred.data().as_slice());
+    let noise_pred_text_data = u8_to_f32_vec(noise_pred_text.data().as_slice());
+    let mut output_data = vec![0 as f32; noise_pred.data().len() / 4];
+    for i in 0..noise_pred.dimensions()[0] {
+        for j in 0..noise_pred.dimensions()[1] {
+            for k in 0..noise_pred.dimensions()[2] {
+                for l in 0..noise_pred.dimensions()[3] {
+                    let index = (i
+                        * noise_pred.dimensions()[1]
+                        * noise_pred.dimensions()[2]
+                        * noise_pred.dimensions()[3]
+                        + j * noise_pred.dimensions()[2] * noise_pred.dimensions()[3]
+                        + k * noise_pred.dimensions()[3]
+                        + l) as usize;
+                    output_data[index] = noise_pred_data[index]
+                        + guidance_scale * (noise_pred_text_data[index] - noise_pred_data[index]);
+                }
+            }
+        }
+    }
+    let output = Tensor::new(
+        &noise_pred.dimensions(),
+        noise_pred.ty(),
+        &f32_to_u8_vec(output_data.as_slice()),
+    );
+    output
+}
+
+fn decode(input: Tensor) -> Result<Tensor, crate::wasi::nn::errors::Error> {
     let graph = load(
         &[DECODER_MODEL.as_bytes().to_vec()],
         GraphEncoding::Onnx,
@@ -273,4 +325,5 @@ fn decode(input: Tensor) -> String {
     exec_context.set_input("latent_sample", input);
     exec_context.compute().unwrap();
     let output = exec_context.get_output("sample");
+    output
 }
