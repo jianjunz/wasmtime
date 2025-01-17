@@ -47,6 +47,16 @@ features = [
     "Foundation_Collections",
     # For getting IVectorView<i64> from tensor.dimensions.
     "implement",
+    # For DirectML APIs.
+    "Win32_System_WinRT_ML",
+    "Win32_Graphics_DXCore",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Direct3D12",
+    "Win32_Foundation",
+    "Graphics_DirectX_Direct3D11",
+    "Win32_AI_MachineLearning_DirectML",
 ]
 optional = true
 

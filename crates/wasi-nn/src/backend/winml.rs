@@ -13,7 +13,7 @@ use crate::backend::{
 use crate::wit::{ExecutionTarget, GraphEncoding, Tensor, TensorType};
 use crate::{ExecutionContext, Graph};
 use std::{fs::File, io::Read, mem::size_of, path::Path};
-use windows::core::{ComInterface, Error, IInspectable, HSTRING};
+use windows::core::{ComInterface, Error, IInspectable, HSTRING, PCSTR};
 use windows::Foundation::Collections::IVectorView;
 use windows::Storage::Streams::{
     DataWriter, InMemoryRandomAccessStream, RandomAccessStreamReference,
@@ -22,22 +22,54 @@ use windows::Win32::Graphics::DXCore::{
     DXCoreCreateAdapterFactory, IDXCoreAdapter, IDXCoreAdapterFactory, IDXCoreAdapterList,
     DXCORE_ADAPTER_ATTRIBUTE_D3D12_CORE_COMPUTE, DXCORE_ADAPTER_ATTRIBUTE_D3D12_GRAPHICS,
 };
+use windows::Win32::Graphics::Direct3D11::{D3D11CreateDevice, ID3D11Device};
+use windows::Win32::Graphics::Direct3D12::{
+    ID3D12InfoQueue1, D3D12_MESSAGE_CALLBACK_IGNORE_FILTERS, D3D12_MESSAGE_CATEGORY,
+    D3D12_MESSAGE_ID, D3D12_MESSAGE_SEVERITY, D3D12_MESSAGE_SEVERITY_CORRUPTION,
+    D3D12_MESSAGE_SEVERITY_ERROR, D3D12_MESSAGE_SEVERITY_MESSAGE, D3D12_MESSAGE_SEVERITY_WARNING,
+};
 use windows::Win32::Graphics::{
     Direct3D::D3D_FEATURE_LEVEL_1_0_CORE,
     Direct3D12::{
-        D3D12CreateDevice, ID3D12CommandQueue, ID3D12Device, D3D12_COMMAND_LIST_TYPE_COMPUTE,
-        D3D12_COMMAND_QUEUE_DESC, D3D12_COMMAND_QUEUE_FLAG_NONE,
+        D3D12CreateDevice, D3D12GetDebugInterface, ID3D12CommandQueue, ID3D12Debug6, ID3D12Device,
+        D3D12_COMMAND_LIST_TYPE_COMPUTE, D3D12_COMMAND_QUEUE_DESC, D3D12_COMMAND_QUEUE_FLAG_NONE,
     },
 };
 use windows::Win32::System::WinRT::ML::ILearningModelDeviceFactoryNative;
+use windows::Win32::AI::MachineLearning::DirectML::{
+    DMLCreateDevice, IDMLDevice, DML_CREATE_DEVICE_FLAG_DEBUG,
+};
 use windows::AI::MachineLearning::{
     ILearningModelFeatureDescriptor, LearningModel, LearningModelBinding, LearningModelDevice,
-    LearningModelDeviceKind, LearningModelEvaluationResult, LearningModelSession,
-    TensorFeatureDescriptor, TensorFloat, TensorFloat16Bit, TensorInt64Bit, TensorKind,
+    LearningModelDeviceKind, LearningModelEvaluationResult, LearningModelSession, TensorDouble,
+    TensorFeatureDescriptor, TensorFloat, TensorFloat16Bit, TensorInt32Bit, TensorInt64Bit,
+    TensorKind,
 };
 
 #[derive(Default)]
 pub struct WinMLBackend();
+
+extern "system" fn d3d12_debug_callback(
+    _category: D3D12_MESSAGE_CATEGORY,
+    severity: D3D12_MESSAGE_SEVERITY,
+    id: D3D12_MESSAGE_ID,
+    description: PCSTR,
+    _context: *mut std::ffi::c_void,
+) {
+    println!(
+        "D3D12: {}: {:?} {}",
+        match severity {
+            D3D12_MESSAGE_SEVERITY_CORRUPTION => "Corruption",
+            D3D12_MESSAGE_SEVERITY_ERROR => "Error",
+            D3D12_MESSAGE_SEVERITY_WARNING => "Warning",
+            D3D12_MESSAGE_SEVERITY_INFO => "Info",
+            D3D12_MESSAGE_SEVERITY_MESSAGE => "Message",
+            _ => "Unknown severity",
+        },
+        id,
+        unsafe { description.display() }
+    );
+}
 
 impl BackendInner for WinMLBackend {
     fn encoding(&self) -> GraphEncoding {
@@ -60,6 +92,74 @@ impl BackendInner for WinMLBackend {
         let device = match target {
             ExecutionTarget::Cpu => LearningModelDevice::Create(LearningModelDeviceKind::Cpu),
             ExecutionTarget::Gpu => LearningModelDevice::Create(LearningModelDeviceKind::DirectX),
+            //   unsafe {
+            //     // For debugging
+            //     let mut d3d12_debug: Option<ID3D12Debug6> = None;
+            //     let _ = D3D12GetDebugInterface(&mut d3d12_debug);
+            //     d3d12_debug.as_ref().unwrap().EnableDebugLayer();
+            //     // d3d12_debug.as_ref().unwrap().SetEnableGPUBasedValidation(true);
+
+            //     // Enumerate adapters with DXCore APIs so MCDM (Microsoft Compute Driver Model) devices can be found.
+            //     let dx_adapter_factory: IDXCoreAdapterFactory = DXCoreCreateAdapterFactory()?;
+            //     let adapter_list =
+            //         dx_adapter_factory.CreateAdapterList::<IDXCoreAdapterList>(&[
+            //             DXCORE_ADAPTER_ATTRIBUTE_D3D12_CORE_COMPUTE,
+            //         ])?;
+            //     let mut selected_device: Option<IDXCoreAdapter> = None;
+            //     for i in 0..adapter_list.GetAdapterCount() {
+            //         let adapter = adapter_list.GetAdapter::<IDXCoreAdapter>(i)?;
+            //         // Select a compute only device. DXCORE_ADAPTER_ATTRIBUTE_D3D12_GENERIC_ML looks more suitable here, but it's defined in DirectX headers.
+            //         if adapter.IsAttributeSupported(&DXCORE_ADAPTER_ATTRIBUTE_D3D12_GRAPHICS) {
+            //             selected_device = Some(adapter);
+            //             break;
+            //         }
+            //     }
+            //     if selected_device.is_none() {
+            //         return Err(BackendError::BackendAccess(anyhow::Error::msg(
+            //             "NPU is not available on this device.",
+            //         )));
+            //     }
+
+            //     let mut d3d12_device: Option<ID3D12Device> = None;
+            //     D3D12CreateDevice(
+            //         &selected_device.unwrap(),
+            //         D3D_FEATURE_LEVEL_1_0_CORE,
+            //         &mut d3d12_device,
+            //     )?;
+            //     if d3d12_device.is_none() {
+            //         return Err(BackendError::BackendAccess(anyhow::Error::msg(
+            //             "Failed to create D3D12 device.",
+            //         )));
+            //     }
+            //     let d3d12_command_queue_desc: D3D12_COMMAND_QUEUE_DESC = D3D12_COMMAND_QUEUE_DESC {
+            //         Type: D3D12_COMMAND_LIST_TYPE_COMPUTE,
+            //         Flags: D3D12_COMMAND_QUEUE_FLAG_NONE,
+            //         NodeMask: 0,
+            //         Priority: 0,
+            //     };
+            //     let mut cookie = 0;
+            //     d3d12_device
+            //         .as_ref()
+            //         .unwrap()
+            //         .cast::<ID3D12InfoQueue1>()?
+            //         .RegisterMessageCallback(
+            //             Some(d3d12_debug_callback),
+            //             D3D12_MESSAGE_CALLBACK_IGNORE_FILTERS,
+            //             std::ptr::null(),
+            //             &mut cookie,
+            //         );
+            //     let d3d12_command_queue = d3d12_device
+            //         .unwrap()
+            //         .CreateCommandQueue::<ID3D12CommandQueue>(&d3d12_command_queue_desc)?;
+            //     let factory = windows::core::factory::<
+            //         LearningModelDevice,
+            //         ILearningModelDeviceFactoryNative,
+            //     >()?;
+
+            //     factory
+            //         .CreateFromD3D12CommandQueue(&d3d12_command_queue)?
+            //         .cast::<LearningModelDevice>()
+            // },
             ExecutionTarget::Tpu => unsafe {
                 // Enumerate adapters with DXCore APIs so MCDM (Microsoft Compute Driver Model) devices can be found.
                 let dx_adapter_factory: IDXCoreAdapterFactory = DXCoreCreateAdapterFactory()?;
@@ -108,6 +208,7 @@ impl BackendInner for WinMLBackend {
                     LearningModelDevice,
                     ILearningModelDeviceFactoryNative,
                 >()?;
+
                 factory
                     .CreateFromD3D12CommandQueue(&d3d12_command_queue)?
                     .cast::<LearningModelDevice>()
@@ -148,6 +249,7 @@ unsafe impl Sync for WinMLGraph {}
 
 impl BackendGraph for WinMLGraph {
     fn init_execution_context(&self) -> Result<ExecutionContext, BackendError> {
+        println!("Model: {:?}, device: {:?}.", &self.model, &self.device);
         let session =
             LearningModelSession::CreateFromModelOnDevice(&self.model, &self.device).unwrap();
         let box_: Box<dyn BackendExecutionContext> = Box::new(WinMLExecutionContext::new(session));
@@ -309,6 +411,22 @@ fn to_inspectable(tensor: &Tensor) -> Result<IInspectable, Error> {
             check_alignment::<i64>(data);
             TensorInt64Bit::CreateFromArray(&shape, data)?.cast::<IInspectable>()
         },
+        TensorType::I32 => unsafe {
+            let data = std::slice::from_raw_parts(
+                tensor.data.as_ptr().cast::<i32>(),
+                tensor.data.len() / size_of::<i32>(),
+            );
+            check_alignment::<i32>(data);
+            TensorInt32Bit::CreateFromArray(&shape, data)?.cast::<IInspectable>()
+        },
+        TensorType::Fp64 => unsafe {
+            let data = std::slice::from_raw_parts(
+                tensor.data.as_ptr().cast::<f64>(),
+                tensor.data.len() / size_of::<f64>(),
+            );
+            check_alignment::<f64>(data);
+            TensorDouble::CreateFromArray(&shape, data)?.cast::<IInspectable>()
+        },
         _ => unimplemented!(),
     }
 }
@@ -335,6 +453,17 @@ fn to_tensor(inspectable: IInspectable, tensor_kind: TensorKind) -> Result<Tenso
             let data = view.into_iter().flat_map(f32::to_le_bytes).collect();
             Tensor {
                 ty: TensorType::Fp32,
+                dimensions,
+                data,
+            }
+        }
+        TensorKind::Double => {
+            let output_tensor = inspectable.cast::<TensorDouble>()?;
+            let dimensions = dimensions_as_u32(&output_tensor.Shape()?)?;
+            let view = output_tensor.GetAsVectorView()?;
+            let data = view.into_iter().flat_map(f64::to_le_bytes).collect();
+            Tensor {
+                ty: TensorType::Fp64,
                 dimensions,
                 data,
             }
